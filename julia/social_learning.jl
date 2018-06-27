@@ -44,7 +44,7 @@ function build_matrices(para)
 end
 
 
-## Solve for the REE (never binds) - RE_AB
+## Solve for the REE (never binds) - RE_NB
 function RE_NB(para)
     @unpack i_star = para
     a, b, c, d, Φ_H, Φ_L, Φ, Γ_H, Γ_L, r_n = build_matrices(para)
@@ -60,7 +60,7 @@ function RE_NB(para)
 end
 
 
-## Solve for the REE (always binds) - RE_NB
+## Solve for the REE (always binds) - RE_AB
 function RE_AB(para)
     @unpack i_star = para
     a, b, c, d, Φ_H, Φ_L, Φ, Γ_H, Γ_L, r_n = build_matrices(para)
@@ -159,31 +159,31 @@ end
 
 
 ## Social Learning Algorithm Part 3) - Tournament Selection
-function tournament!(para, z_i, history)
+function tournament(para, z_i, history)
     @unpack N = para
     y_h, π_h, rn_h = history
+    z_i′ = similar(z_i)
     ## N matches with replacement
     ## tournament for each match
     for i in 1:N
         agent1 = rand(1:N)
         agent2 = sample(setdiff(1:N, agent1))
-        if z_i[:, agent1] != z_i[:, agent2]
-            F_y1, F_π1 = fitness(z_i[:, agent1], y_h, π_h, rn_h, para)
-            F_y2, F_π2 = fitness(z_i[:, agent2], y_h, π_h, rn_h, para)
-            ## output tournament
-            if F_y1 > F_y2
-                z_i[[1; 3], agent2] = z_i[[1; 3], agent1]
-            else
-                z_i[[1; 3], agent1] = z_i[[1; 3], agent2]
-            end
-            ## inflation tournament
-            if F_π1 > F_π2
-                z_i[[2; 4], agent2] = z_i[[2; 4], agent1]
-            else
-                z_i[[2; 4], agent1] = z_i[[2; 4], agent2]
-            end
+        F_y1, F_π1 = fitness(z_i[:, agent1], y_h, π_h, rn_h, para)
+        F_y2, F_π2 = fitness(z_i[:, agent2], y_h, π_h, rn_h, para)
+        ## output tournament
+        if F_y1 > F_y2
+            z_i′[[1; 3], i] = z_i[[1; 3], agent1]
+        else
+            z_i′[[1; 3], i] = z_i[[1; 3], agent2]
+        end
+        ## inflation tournament
+        if F_π1 > F_π2
+            z_i′[[2; 4], i] = z_i[[2; 4], agent1]
+        else
+            z_i′[[2; 4], i] = z_i[[2; 4], agent2]
         end
     end
+    return z_i′
 end
 
 
@@ -237,7 +237,7 @@ function simulate_SL(para; case = 1, mean_preseve = true, finite_mem = false, me
         mutation!(para, z_i)
         t_init = !finite_mem * 1 + finite_mem * max(1, t - mem_size + 1)
         history = y_t[t_init:t], π_t[t_init:t], rn_t[t_init:t]
-        tournament!(para, z_i, history)
+        z_i = tournament(para, z_i, history)
         z̄_t[:, t + 1] = mean(z_i, 2)
         σz_t[:, t + 1] = std(z_i, 2)
         y_t[t + 1], π_t[t + 1] = PLM_to_ALM(para, z_i, rn_t[t + 1])
@@ -289,16 +289,16 @@ end
 
 
 ## Housekeeping
-para = SL_model(T0 = 100, T1 = 400, N = 300, pm = 0.05, pc = 0., Σ = zeros(4, 4), rn_H = 0., rn_L = 0.)
-@time z̄_t, σz_t, y_t, π_t = simulate_SL(para; case = 0, finite_mem = false, mem_size = 100)
+para = SL_model(T0 = 100, T1 = 1000, N = 300, pm = 0.05, pc = 0.)
+@time z̄_t, σz_t, y_t, π_t = simulate_SL(para; case = 1, finite_mem = false)
 
 path = "EXP"
 #z̄_t, σz_t, y_t, π_t = read_all(path)
 #write_all(z̄_t, σz_t, y_t, π_t; str = path)
 
 
-periods = 1:(para.T0 + 300)
-pz, py, pπ = plot_all(para, z̄_t[:, periods], σz_t[:, periods], y_t[periods], π_t[periods])
+#periods = 1:(para.T0 + 300)
+#pz, py, pπ = plot_all(para, z̄_t[:, periods], σz_t[:, periods], y_t[periods], π_t[periods])
 pz, py, pπ = plot_all(para, z̄_t, σz_t, y_t, π_t)
 
 savefig(pz, "../figures/$(path)/z.pdf")
