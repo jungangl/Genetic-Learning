@@ -1,4 +1,4 @@
-using Parameters, NLsolve, StatsBase, Plots, Distributions, QuantEcon
+using Parameters, NLsolve, StatsBase, Plots, Distributions, QuantEcon, Devectorize
 @with_kw type SL_model
     ## Structural Parameters
     β::Float64 = 0.99
@@ -137,39 +137,49 @@ function mutation!(para, z_i)
 end
 
 
-## Define the fitness function used by tournament!
-function fitness(z_belief, y_h, π_h, rn_h, para)
-    @unpack rn_H, rn_L, ρ_H, ρ_L = para
-    yiH, πiH, yiL, πiL = z_belief
-    T_forc = length(y_h) - 1
-    ŷ, π̂ = [zeros(T_forc) for _ in 1:2]
-    for (indx, k) in enumerate(2:T_forc + 1)
-        if rn_h[k - 1] == rn_H
-            ŷ[indx] = ρ_H * yiH + (1 - ρ_H) * yiL
-            π̂[indx] = ρ_H * πiH + (1 - ρ_H) * πiL
-        elseif rn_h[k - 1] == rn_L
-            ŷ[indx] = (1 - ρ_L) * yiH + ρ_L * yiL
-            π̂[indx] = (1 - ρ_L) * πiH + ρ_L * πiL
-        end
-    end
-    F_y = -mean((ŷ .- y_h[2:end]) .^ 2)
-    F_π = -mean((π̂ .- π_h[2:end]) .^ 2)
-    return F_y, F_π
-end
-
-
 ## Social Learning Algorithm Part 3) - Tournament Selection
 function tournament(para, z_i, history)
-    @unpack N = para
+    @unpack N, rn_H, rn_L, ρ_H, ρ_L = para
     y_h, π_h, rn_h = history
+    T_forc = length(y_h) - 1
     z_i′ = similar(z_i)
+    same_agent = true
+    agent1, agent2 = ones(Int64, 2)
+    y1_scores, y2_scores, π1_scores, π2_scores = [zeros(T_forc) for i in 1:4]
+    ŷ, π̂, F_y1, F_π1, y1H, π1H, y1L, π1L, y2H, π2H, y2L, π2L = zeros(12)
     ## N matches with replacement
     ## tournament for each match
     for i in 1:N
-        agent1 = rand(1:N)
-        agent2 = sample(setdiff(1:N, agent1))
-        F_y1, F_π1 = fitness(z_i[:, agent1], y_h, π_h, rn_h, para)
-        F_y2, F_π2 = fitness(z_i[:, agent2], y_h, π_h, rn_h, para)
+        same_agent = true
+        while same_agent
+            agent1, agent2 = rand(1:N, 2)
+            if agent1 != agent2
+                same_agent = false
+            end
+        end
+        y1H, π1H, y1L, π1L = z_i[:, agent1]
+        y2H, π2H, y2L, π2L = z_i[:, agent2]
+        for t in 1:T_forc
+            if rn_h[t]
+                ŷ1 = ρ_H * y1H + (1 - ρ_H) * y1L
+                π̂1 = ρ_H * π1H + (1 - ρ_H) * π1L
+                ŷ2 = ρ_H * y2H + (1 - ρ_H) * y2L
+                π̂2 = ρ_H * π2H + (1 - ρ_H) * π2L
+            else
+                ŷ1 = (1 - ρ_L) * y1H + ρ_L * y1L
+                π̂1 = (1 - ρ_L) * π1H + ρ_L * π1L
+                ŷ2 = (1 - ρ_L) * y2H + ρ_L * y2L
+                π̂2 = (1 - ρ_L) * π2H + ρ_L * π2L
+            end
+            y1_scores[t] = (ŷ1 - y_h[t + 1]) ^ 2
+            π1_scores[t] = (π̂1 - π_h[t + 1]) ^ 2
+            y2_scores[t] = (ŷ2 - y_h[t + 1]) ^ 2
+            π2_scores[t] = (π̂2 - π_h[t + 1]) ^ 2
+        end
+        F_y1 = -mean(y1_scores)
+        F_π1 = -mean(π1_scores)
+        F_y2 = -mean(y2_scores)
+        F_π2 = -mean(π2_scores)
         ## output tournament
         if F_y1 > F_y2
             z_i′[[1; 3], i] = z_i[[1; 3], agent1]
@@ -226,6 +236,7 @@ function simulate_SL(para; case = 1, mean_preseve = true, finite_mem = false, me
     y_t, π_t = [zeros(T0 + T1) for _ in 1:2]
     rn_indices = simulate(mc, T0 + T1)
     rn_t = rn[rn_indices]
+    rn_high_t = rn_indices .== 1
     y_t[1:T0] = (z_init[[1, 3]])[rn_indices[1:T0]]
     π_t[1:T0] = (z_init[[2, 4]])[rn_indices[1:T0]]
     ## Initialize data for time T0 + 1
@@ -236,7 +247,7 @@ function simulate_SL(para; case = 1, mean_preseve = true, finite_mem = false, me
         crossover!(para, z_i)
         mutation!(para, z_i)
         t_init = !finite_mem * 1 + finite_mem * max(1, t - mem_size + 1)
-        history = y_t[t_init:t], π_t[t_init:t], rn_t[t_init:t]
+        history = y_t[t_init:t], π_t[t_init:t], rn_high_t[t_init:t]
         z_i = tournament(para, z_i, history)
         z̄_t[:, t + 1] = mean(z_i, 2)
         σz_t[:, t + 1] = std(z_i, 2)
@@ -289,18 +300,19 @@ end
 
 
 ## Housekeeping
-para = SL_model(T0 = 100, T1 = 1000, N = 300, pm = 0.05, pc = 0.)
+para = SL_model(T0 = 100, T1 = 1000, N = 300)
+Profile.init(n = 10 ^ 7, delay = 0.01)
 @time z̄_t, σz_t, y_t, π_t = simulate_SL(para; case = 1, finite_mem = false)
 
-path = "EXP"
+#path = "EXP"
 #z̄_t, σz_t, y_t, π_t = read_all(path)
 #write_all(z̄_t, σz_t, y_t, π_t; str = path)
 
 
 #periods = 1:(para.T0 + 300)
 #pz, py, pπ = plot_all(para, z̄_t[:, periods], σz_t[:, periods], y_t[periods], π_t[periods])
-pz, py, pπ = plot_all(para, z̄_t, σz_t, y_t, π_t)
+#pz, py, pπ = plot_all(para, z̄_t, σz_t, y_t, π_t)
 
-savefig(pz, "../figures/$(path)/z.pdf")
-savefig(py, "../figures/$(path)/y.pdf")
-savefig(pπ, "../figures/$(path)/pi.pdf")
+#savefig(pz, "../figures/$(path)/z.pdf")
+#savefig(py, "../figures/$(path)/y.pdf")
+#savefig(pπ, "../figures/$(path)/pi.pdf")
