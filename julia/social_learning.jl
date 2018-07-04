@@ -301,10 +301,9 @@ end
 
 ## Housekeeping
 para = SL_model(T0 = 100, T1 = 1000, N = 300)
-Profile.init(n = 10 ^ 7, delay = 0.01)
 @time z̄_t, σz_t, y_t, π_t = simulate_SL(para; case = 1, finite_mem = false)
 
-#path = "EXP"
+path = "RE-AB/IFM/T3"
 #z̄_t, σz_t, y_t, π_t = read_all(path)
 #write_all(z̄_t, σz_t, y_t, π_t; str = path)
 
