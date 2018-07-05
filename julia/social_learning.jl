@@ -1,4 +1,4 @@
-using Parameters, NLsolve, StatsBase, Plots, Distributions, QuantEcon, Devectorize
+using Parameters, NLsolve, StatsBase, Plots, Distributions, QuantEcon
 @with_kw type SL_model
     ## Structural Parameters
     β::Float64 = 0.99
@@ -26,6 +26,7 @@ using Parameters, NLsolve, StatsBase, Plots, Distributions, QuantEcon, Devectori
 end
 
 
+
 ## Construct matrices from the structural parameters
 function build_matrices(para)
     @unpack κ, σ, β, ϕ_y, ϕ_π, ρ_H, ρ_L, rn_H, rn_L = para
@@ -44,6 +45,7 @@ function build_matrices(para)
 end
 
 
+
 ## Solve for the REE (never binds) - RE_NB
 function RE_NB(para)
     @unpack i_star = para
@@ -58,6 +60,7 @@ function RE_NB(para)
     end
     return z_nb
 end
+
 
 
 ## Solve for the REE (always binds) - RE_AB
@@ -75,6 +78,7 @@ function RE_AB(para)
 end
 
 
+
 ## Solve for the REE (ocasionally binds) - RE_OB
 function RE_OB(para)
     @unpack i_star = para
@@ -88,6 +92,7 @@ function RE_OB(para)
     end
     return z_ob
 end
+
 
 
 ## Define a function that maps a vector of PLM to a conditional ALM
@@ -109,6 +114,7 @@ function PLM_to_ALM(para, z_i, rn)
 end
 
 
+
 ## Social Learning Algorithm Part 1) - Crossover
 function crossover!(para, z_i)
     @unpack pc, N = para
@@ -126,6 +132,7 @@ function crossover!(para, z_i)
 end
 
 
+
 ## Social Learning Algorithm Part 2) - Mutation
 function mutation!(para, z_i)
     @unpack pm, N, Σ_m = para
@@ -135,6 +142,7 @@ function mutation!(para, z_i)
         z_i[:, i] = z_i[:, i] + Σ_m * rand(dist)
     end
 end
+
 
 
 ## Social Learning Algorithm Part 3) - Tournament Selection
@@ -223,6 +231,38 @@ function tournament(para, z_i, history)
 end
 
 
+
+## Save the data as it goes
+function write_data(path, t_start, t_end, z̄_t, σz_t, y_t, π_t)
+    writedlm("../data/$(path)/z_bar/$(t_start)-$(t_end).csv", z̄_t, ',')
+    writedlm("../data/$(path)/z_sigma/$(t_start)-$(t_end).csv", σz_t, ',')
+    writedlm("../data/$(path)/y/$(t_start)-$(t_end).csv", y_t, ',')
+    writedlm("../data/$(path)/pi/$(t_start)-$(t_end).csv", π_t, ',')
+end
+
+
+
+## Read all data saved in the data folder
+function read_data(path, T0, T1, save_gap)
+    z̄_t, σz_t =[zeros(T0 + T1, 4) for i in 1:2]
+    y_t, π_t = [zeros(T0 + T1) for i in 1:2]
+    z̄_t[1:T0, :] = readdlm("../data/$(path)/z_bar/1-$(T0).csv", ',')
+    σz_t[1:T0, :] = readdlm("../data/$(path)/z_sigma/1-$(T0).csv", ',')
+    y_t[1:T0] = readdlm("../data/$(path)/y/1-$(T0).csv", ',')
+    π_t[1:T0] = readdlm("../data/$(path)/pi/1-$(T0).csv", ',')
+    for i in 1:(T1 ÷ save_gap)
+        t_start = T0 + (i - 1) * save_gap + 1
+        t_end = T0 + i * save_gap
+        z̄_t[t_start:t_end, :] = readdlm("../data/$(path)/z_bar/$(t_start)-$(t_end).csv", ',')
+        σz_t[t_start:t_end, :] = readdlm("../data/$(path)/z_sigma/$(t_start)-$(t_end).csv", ',')
+        y_t[t_start:t_end] = readdlm("../data/$(path)/y/$(t_start)-$(t_end).csv", ',')
+        π_t[t_start:t_end] = readdlm("../data/$(path)/pi/$(t_start)-$(t_end).csv", ',')
+    end
+    return z̄_t, σz_t, y_t, π_t
+end
+
+
+
 ## Simulate Social Learning
 ## case 1) initialize the economy with T0 periods of RE_AB for all agents
 ## case 2) initialize the economy with T0 periods of RE_NB for all agents
@@ -232,15 +272,15 @@ end
 ## of beliefs on every agent (two kinds of beliefs)
 ## case 1) every agent revert back to RE_NB at period T0 + 1
 ## case 2) every agent revert back to RE_AB at period T0 + 1
-function simulate_SL(para; case = 1, mean_preseve = true, finite_mem = false, mem_size = 1000)
+function simulate_SL(para, path, save_gap; case = 1, mean_preseve = true, finite_mem = false, mem_size = 1000)
     @unpack T0, T1, Σ, N, rn, mc, rn_H, rn_L = para
     #------------------------initialize beliefs------------------------#
     ## Initialize objects of interest
-    z̄_t = zeros(4, T0 + T1)
-    σz_t = zeros(4, T0 + T1)
+    z̄_t = zeros(T0 + T1, 4)
+    σz_t = zeros(T0 + T1, 4)
     ## Initialize the beliefs from time 0 to time T0
     z_init = case * RE_AB(para) + (1 - case) * RE_NB(para)
-    z̄_t[:, 1:T0] = z_init .* ones(1, T0)
+    z̄_t[1:T0, :] = z_init' .* ones(T0)
     z_i = z_init .* ones(1, N)
     ## Perturb the bliefs at time T0 + 1
     ## If it is a mean preserving pertubation
@@ -255,8 +295,8 @@ function simulate_SL(para; case = 1, mean_preseve = true, finite_mem = false, me
         z_perturb = (1 - case) * RE_AB(para) + case * RE_NB(para)
         z_i = z_perturb .* ones(1, N)
     end
-    z̄_t[:, T0 + 1] = mean(z_i, 2)
-    σz_t[:, T0 + 1] = std(z_i, 2)
+    z̄_t[T0 + 1, :] = mean(z_i, 2)
+    σz_t[T0 + 1, :] = std(z_i, 2)
     #-----------------------initialize data history----------------------#
     ## Initialize data from time 1 to time T0
     y_t, π_t = [zeros(T0 + T1) for _ in 1:2]
@@ -265,6 +305,9 @@ function simulate_SL(para; case = 1, mean_preseve = true, finite_mem = false, me
     rn_high_t = rn_indices .== 1
     y_t[1:T0] = (z_init[[1, 3]])[rn_indices[1:T0]]
     π_t[1:T0] = (z_init[[2, 4]])[rn_indices[1:T0]]
+    t_start = 1
+    t_end = T0
+    write_data(path, t_start, t_end, z̄_t[t_start:t_end, :], σz_t[t_start:t_end, :], y_t[t_start:t_end], π_t[t_start:t_end])
     ## Initialize data for time T0 + 1
     y_t[T0 + 1], π_t[T0 + 1] = PLM_to_ALM(para, z_i, rn_t[T0 + 1])
     #-----------Simulate the periods from T0 + 2 to T0 + T1--------------#
@@ -275,12 +318,18 @@ function simulate_SL(para; case = 1, mean_preseve = true, finite_mem = false, me
         t_init = !finite_mem * 1 + finite_mem * max(1, t - mem_size + 1)
         history = y_t[t_init:t], π_t[t_init:t], rn_high_t[t_init:t]
         z_i = tournament(para, z_i, history)
-        z̄_t[:, t + 1] = mean(z_i, 2)
-        σz_t[:, t + 1] = std(z_i, 2)
+        z̄_t[t + 1, :] = mean(z_i, 2)
+        σz_t[t + 1, :] = std(z_i, 2)
         y_t[t + 1], π_t[t + 1] = PLM_to_ALM(para, z_i, rn_t[t + 1])
+        if mod(t - T0 + 1, save_gap) == 0
+            t_start = t + 2 - save_gap
+            t_end = t + 1
+            write_data(path, t_start, t_end, z̄_t[t_start:t_end, :], σz_t[t_start:t_end, :], y_t[t_start:t_end], π_t[t_start:t_end])
+        end
     end
     return z̄_t, σz_t, y_t, π_t
 end
+
 
 
 ## Define the function that plots all time series
@@ -293,9 +342,9 @@ function plot_all(para, z̄_t, σz_t, y_t, π_t)
     titles = hcat("y_H", "pi_H", "y_L", "pi_L")
     pz = plot(size = (1000, 2000), title = titles, grid = false, layout = (4, 1))#, ylims = (-0.04, 0.02))
     for i in 1:4
-        plot!(pz, z̄_t[i, :], label = "", color = :red, lw = 1.5, subplot = i)
-        plot!(pz, z̄_upper_t[i, :] , label = "", color = :blue, lw = 1, subplot = i)
-        plot!(pz, z̄_lower_t[i, :], label = "", color = :blue, lw = 1, subplot = i)
+        plot!(pz, z̄_t[:, i], label = "", color = :red, lw = 1.5, subplot = i)
+        plot!(pz, z̄_upper_t[:, i] , label = "", color = :blue, lw = 1, subplot = i)
+        plot!(pz, z̄_lower_t[:, i], label = "", color = :blue, lw = 1, subplot = i)
         plot!(x -> z_nb[i], label = "RENB", ls = :dash, lw = 1.5, subplot = i)
         plot!(x -> z_ab[i], label = "REAB", ls = :dash, color = :black, lw = 1.5, subplot = i)
         if i != 1 plot!(pz, legend = false, subplot = i) end
@@ -306,38 +355,20 @@ function plot_all(para, z̄_t, σz_t, y_t, π_t)
 end
 
 
-## Write all data generated by the code
-function write_all(z̄_t, σz_t, y_t, π_t; str = "")
-    writedlm("../data/$(str)/z_bar.csv", z̄_t, ',')
-    writedlm("../data/$(str)/z_sigma.csv", σz_t, ',')
-    writedlm("../data/$(str)/y.csv", y_t, ',')
-    writedlm("../data/$(str)/pi.csv", π_t, ',')
-end
-
-
-## Read all data saved in the data folder
-function read_all(str)
-    z̄_t = readdlm("../data/$(str)/z_bar.csv", ',')
-    σz_t = readdlm("../data/$(str)/z_sigma.csv", ',')
-    y_t = readdlm("../data/$(str)/y.csv", ',')
-    π_t = readdlm("../data/$(str)/pi.csv", ',')
-    return z̄_t, σz_t, y_t, π_t
-end
-
 
 ## Housekeeping
-para = SL_model(T0 = 100, T1 = 1_000, N = 300)
-z̄_t, σz_t, y_t, π_t = simulate_SL(para; case = 1, finite_mem = false, mem_size = 1_000)
-
-path = "RE-AB/IFM/T3"
-#z̄_t, σz_t, y_t, π_t = read_all(path)
-write_all(z̄_t, σz_t, y_t, π_t; str = path)
-
+path = "RE-AB/IFM"
+save_gap = 1_000
+T0 = 100
+T1 = 10_000
+para = SL_model(T0 = T0, T1 = T1, N = 300)
+@time z̄_t, σz_t, y_t, π_t = simulate_SL(para, path, save_gap; case = 1, finite_mem = false, mem_size = 1_000)
+#z̄_t1, σz_t1, y_t1, π_t1 = read_data(path, T0, T1, save_gap)
 
 #periods = 1:(para.T0 + 300)
 #pz, py, pπ = plot_all(para, z̄_t[:, periods], σz_t[:, periods], y_t[periods], π_t[periods])
-#pz, py, pπ = plot_all(para, z̄_t, σz_t, y_t, π_t)
 
+#pz, py, pπ = plot_all(para, z̄_t, σz_t, y_t, π_t)
 #savefig(pz, "../figures/$(path)/z.pdf")
 #savefig(py, "../figures/$(path)/y.pdf")
 #savefig(pπ, "../figures/$(path)/pi.pdf")
