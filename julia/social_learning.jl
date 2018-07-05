@@ -269,7 +269,7 @@ function simulate_SL(para; case = 1, mean_preseve = true, finite_mem = false, me
     y_t[T0 + 1], π_t[T0 + 1] = PLM_to_ALM(para, z_i, rn_t[T0 + 1])
     #-----------Simulate the periods from T0 + 2 to T0 + T1--------------#
     for t in T0 + 1:T0 + T1 - 1
-        if mod(t, 100) == 0 println(t) end
+        if mod(t, 1_000) == 0 println(t) end
         crossover!(para, z_i)
         mutation!(para, z_i)
         t_init = !finite_mem * 1 + finite_mem * max(1, t - mem_size + 1)
@@ -326,12 +326,12 @@ end
 
 
 ## Housekeeping
-para = SL_model(T0 = 100, T1 = 1000, N = 300)
-@time z̄_t, σz_t, y_t, π_t = simulate_SL(para; case = 1, finite_mem = false)
+para = SL_model(T0 = 100, T1 = 1_000, N = 300)
+z̄_t, σz_t, y_t, π_t = simulate_SL(para; case = 1, finite_mem = false, mem_size = 1_000)
 
 path = "RE-AB/IFM/T3"
 #z̄_t, σz_t, y_t, π_t = read_all(path)
-#write_all(z̄_t, σz_t, y_t, π_t; str = path)
+write_all(z̄_t, σz_t, y_t, π_t; str = path)
 
 
 #periods = 1:(para.T0 + 300)
